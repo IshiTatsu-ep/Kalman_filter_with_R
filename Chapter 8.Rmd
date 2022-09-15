@@ -1,0 +1,297 @@
+---
+title: "Chapter 8"
+output: html_notebook
+---
+
+P.102　カルマンフィルタリング
+ナイル川の流域データを使用
+```{r}
+#install.packages("cachem",dependencies = TRUE)
+library(dlm)
+y <- Nile
+t_max <- length(y)
+```
+
+1時点分のカルマンフィルタリングを行う関数
+```{r}
+Kalman_filtering <- function(m_t_minus_1,C_t_minus_1,t){
+  #一期先予測分布
+  a_t <- G_t %*% m_t_minus_1
+  R_t <- G_t %*% C_t_minus_1 %*% t(G_t) + W_t
+  
+  #一期先予測尤度
+  f_t <- F_t %*% a_t
+  Q_t <- F_t %*% R_t %*% t(F_t) +V_t
+  
+  #カルマンゲイン
+  K_t <- R_t %*% t(F_t) %*% solve(Q_t)
+  
+  #状態の更新
+  m_t <- a_t + K_t %*% (y[t]-f_t)
+  C_t <- diag(nrow(R_t) - K_t %*% F_t) %*% R_t
+  
+  #フィルタリング分布と一期先予測分布の平均と分散を返す
+  return(list(m = m_t, C= C_t, 
+              a = a_t, R = R_t))
+}
+
+#線形ガウス型状態空間のパラメータを設定（すべて1×1の行列）
+G_t <- matrix(1, ncol=1, nrow=1); W_t <- matrix(exp(7.29), ncol=1, nrow=1)
+F_t <- matrix(1, ncol=1, nrow=1); V_t <- matrix(exp(9.62), ncol=1,nrow=1)
+m0 <- matrix(0,ncol=1,nrow=1); C0 <- matrix( 1e+7, ncol=1,nrow=1)
+
+#フィルタリング分布（+一期先予測分布）の平均分散を求める
+#状態ベクトルの初期化
+m <- rep(NA_real_, t_max) ; C <- rep(NA_real_, t_max)
+a <- rep(NA_real_, t_max) ; R <- rep(NA_real_, t_max)
+```
+
+時点：t-1
+```{r}
+KF <- Kalman_filtering(m0,C0,t = 1)
+m[1] <- KF$m; C[1] <- KF$C
+a[1] <- KF$a; R[1] <- KF$R
+```
+
+時点2～t_max
+```{r}
+for(t in 2:t_max){
+  KF <- Kalman_filtering(m[t-1],C[t-1],t=t)
+  m[t] <- KF$m; C[t] <- KF$C
+  a[t] <- KF$a; R[t] <- KF$R
+}
+```
+
+
+プロット。確かに平滑化できている。
+```{r}
+y_plot <- as.vector(y)
+ts.plot(cbind(y_plot,m),
+        lty = c("solid","solid"),
+        col = c("lightgray", "blue"),
+        ylab = "")
+#凡例
+legend(legend = c("観測値","カルマン平滑化"),
+       lty = c("solid","solid"),
+       col = c("lightgray","blue"),
+       x = "topright", text.width = 17, cex=0.6)
+```
+
+8.2 カルマン予測
+
+予測期間
+```{r}
+t <- t_max
+#予測期間は10期先まで
+nAhead <- 10
+```
+K = 1期先カルマン予測を行う関数
+```{r}
+Kalman_prediction <- function(a_t0,R_t0){
+  #一期先予測分布
+  a_t1 <- G_t_plus_1 %*% a_t0
+  R_t1 <- G_t_plus_1 %*% R_t0 %*% t(G_t_plus_1) + W_t_plus_1
+  
+  return(list(a=a_t1,R=R_t1))
+}
+```
+線形ガウス型状態空間のパラメータを設定（時不変）
+
+```{r}
+G_t_plus_1 <- G_t; W_t_plus_1 <- W_t
+```
+k期先の予測分布の平均・分散を求める
+状態の領域を確保
+```{r}
+a_ <- rep(NA_real_, t_max + nAhead); R_ <- rep(NA_real_, t_max + nAhead)
+```
+k = 0
+```{r}
+a_[t + 0] <- m[t]; R_[t + 0] <- C[t]
+```
+k = 1～nAhead
+```{r}
+for (k in 1:nAhead){
+  KP <- Kalman_prediction(a_[t + k-1], R_[t + k-1])
+  a_[t+k] <- KP$a; R_[t+k] <- KP$R
+}
+```
+```{r}
+#is.numeric(a_[t])
+#is.numeric(G_t_plus_1)
+#G_t_plus_1 %*% a_[t]
+#a_[t]
+#is.matrix(G_t_plus_1)
+#is.vector(a_[t])
+```
+
+プロット
+```{r}
+y_expand <- c(as.vector(y),rep(NA_real_,nAhead))
+#信頼区間
+trust_upper97.5 <- qnorm(p=0.975, mean=a_, sd=sqrt(R_))
+trust_lower97.5 <- qnorm(p=0.025, mean=a_, sd=sqrt(R_))
+
+ts.plot(cbind(y_expand,a_,trust_upper97.5,trust_lower97.5),
+        lty = c("solid","solid","dashed","dashed"),
+        col = c("lightgray", "blue","black","black"),
+        ylab = "")
+#凡例
+legend(legend = c("観測値","平均（予測分布）","95%区間(予測分布)"),
+       lty = c("solid","solid","dashed"),
+       col = c("lightgray","blue","black"),
+       x = "topright", text.width = 17, cex=0.6)
+```
+
+8.1.3カルマン平滑化
+カルマン平滑化は、時点Tまでのフィルタリング分布を、
+1期先平滑化分布によって、時間逆方向に平滑化する。  
+一期分のカルマン平滑化を行う関数
+```{r}
+Kalman_smoothing <- function(s_t_plus_1, S_t_plus_1,t){
+  #平滑化利得
+  A_t <- C[t] %*% t(G_t_plus_1) %*% solve(R[t+1])
+  s_t <- m[t] + A_t %*% (s_t_plus_1 - a[t+1])
+  S_t <- C[t] + A_t %*% (S_t_plus_1 - R[t+1]) %*% t(A_t)
+  
+  #平滑化分布の平均と分散を返す
+  return(list(s = s_t,S = S_t))
+}
+```
+
+状態の領域を確保
+```{r}
+s <- rep(NA_real_, t_max); S <- rep(NA_real_, t_max)
+```
+時点 t=t_max
+```{r}
+s[t_max] <- m[t_max]; S[t_max] <- C[t_max]
+```
+後ろ向きに逐次更新
+```{r}
+for(t in (t_max-1):1){
+  KS <- Kalman_smoothing(s[t+1],S[t+1],t = t)
+  s[t] <- KS$s;S[t] <- KS$S
+}
+```
+プロット
+```{r}
+trust_upper97.5 <- qnorm(p=0.975, mean=s, sd=sqrt(S))
+trust_lower97.5 <- qnorm(p=0.025, mean=s, sd=sqrt(S))
+ts.plot(cbind(as.vector(y),s,trust_upper97.5,trust_lower97.5),
+        lty = c("solid","solid","dashed","dashed"),
+        col = c("lightgray", "blue","black","black"),
+        ylab = "")
+legend(legend = c("観測値","平均（平滑化分布）","95%区間(平滑化分布)"),
+       lty = c("solid","solid","dashed"),
+       col = c("lightgray","blue","black"),
+       x = "topright", text.width = 25, cex=0.6)
+```
+8.2 dlmパッケージを利用した、ローカルレベルモデルの実装  
+
+前処理
+```{r}
+library(dlm)
+```
+状態空間モデルの設定
+1次元のローカルレベルモデルを設定
+```{r}
+mod <- dlmModPoly(order = 1)
+```
+内容を確認  
+m0:事前分布の平均  
+C0：事前分布の分散  
+FF：観測行列  
+V:観測ノイズの分散  
+GG：状態遷移行列  
+W：状態ノイズの分散  
+Jで始まるパラメータ：時変のモデルで使用されるパラメータ
+```{r}
+str(mod)
+```
+まずは、W,Vを最尤法で推定する。
+```{r}
+build_dlm <- function(par){
+  mod$W[1,1] <- exp(par[1])
+  mod$V[1,1] <- exp(par[2])
+  return(mod)
+}
+```
+最尤推定（初期値を変えて3回推定）
+```{r}
+lapply(list(c(0,0), c(1,10), c(20,3)),function(parms){
+  dlmMLE(y=Nile, parm = parms, build = build_dlm)
+})
+```
+パラメータの最尤推定（ヘッセ行列を戻り値に含める）
+```{r}
+fit_dlm <- dlmMLE(y=Nile, parm = c(0,0), build = build_dlm, hessian = TRUE)
+```
+デルタ法により最尤推定の漸近的な標準誤差を求める
+```{r}
+exp(fit_dlm$par) * sqrt(diag(solve(fit_dlm$hessian)))
+```
+パラメータの最尤推定結果をモデルに設定
+```{r}
+mod <- build_dlm(fit_dlm$par)
+str(mod)
+```
+フィルタリングの実施
+```{r}
+dlmfiltered_obj <- dlmFilter(y = Nile, mod = mod)
+str(dlmfiltered_obj,max.level = 1)
+```
+フィルタリング分布の平均と分散を求める
+```{r}
+m <- dropFirst(dlmfiltered_obj$m)
+m_stdev <- sqrt(
+  dropFirst(as.numeric(
+    dlmSvd2var(dlmfiltered_obj$U.C, dlmfiltered_obj$D.C)
+  ))
+)
+```
+信頼区間の計算
+```{r}
+m_quant <- list(m + qnorm(0.025,sd=m_stdev),m + qnorm(0.975, sd = m_stdev))
+```
+プロット
+```{r}
+ts.plot(cbind(Nile,m,do.call("cbind",m_quant)),
+        col = c("lightgray","black","black", "black"),
+        lty = c("solid","solid","dashed","dashed"))
+
+legend(legend = c("観測値","平均（フィルタリング分布）","95%区間（フィルタリング分布）"),
+       lty = c("solid","solid","dashed"),
+       col = c("lightgray","black","black"),
+       x = "topright", text.width = 32, cex=0.6)
+```
+カルマン予測
+```{r}
+dlmForecasted_obj <- dlmForecast(mod = dlmfiltered_obj, nAhead = 10)
+```
+結果確認
+```{r}
+str(dlmForecasted_obj, max.level = 1)
+```
+予測分布の平均と標準偏差を求める
+```{r}
+a <- ts(data=dlmForecasted_obj$a, start = c(1971,1))
+a_sdev <- sqrt(
+  as.numeric(dlmForecasted_obj$R)
+)
+```
+信頼区間の計算
+```{r}
+a_quant <- list(a + qnorm(0.025,sd = a_sdev), a + qnorm(0.975,sd = a_sdev))
+```
+プロット
+```{r}
+ts.plot(cbind(Nile,a,do.call("cbind",a_quant)),
+        col = c("lightgray","black","black", "black"),
+        lty = c("solid","solid","dashed","dashed"))
+
+legend(legend = c("観測値","平均（予測分布）","95%区間（予測分布）"),
+       lty = c("solid","solid","dashed"),
+       col = c("lightgray","black","black"),
+       x = "topright", text.width = 32, cex=0.6)
+```
