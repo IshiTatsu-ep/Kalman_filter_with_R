@@ -1,0 +1,140 @@
+---
+title: "Chapter 9"
+output: html_notebook
+---
+
+**第9章　線形・ガウス型状態空間モデルにおける代表的な成分モデルの紹介と分析例**  
+**ローカルレベルモデル**
+ランダムウォークプラスノイズモデルとも呼ばれる。  
+x_t = x_t-1 + w_t  
+y_t = x_t + v_t  
+```{r}
+set.seed(23)
+library(dlm)
+```
+
+人工的なローカルレベルモデルの設定  
+後で使うので、一旦ダミーデータを精製
+```{r}
+W <- 1
+V <- 2
+m0 <- 10
+C0 <- 9
+mod <- dlmModPoly(order = 1,dW = W, dV = V, m0 = m0, C0 = C0)
+```
+カルマン予測を利用し、観測値を生成
+```{r}
+t_max <- 200
+sim_data <- dlmForecast(mod = mod, nAhead = t_max, sampleNew = 1)
+y <- sim_data$newObs[[1]]
+```
+結果をts型に変換
+```{r}
+y <- ts(as.vector(y))
+plot(y,ylab = "y")
+```
+**ローカルトレンドモデル**
+時系列成分のレベルの推定に、線形な傾きを考慮したモデル。
+x^n_t = x^n_t-1 + x^n_t-1 + w^n_t  n=N,…,2 Nはレベル、N-1は傾き、N-2は曲率…  
+x^1_t = x^1_t-1 +w^1_t  
+y_t = x^N_t + v_t  
+
+**周期モデル-1 時系列方向からのアプローチ**
+
+
+```{r}
+library(dlm)
+Ryori <- read.csv("CO2.csv")
+y_all <- ts(data =Ryori$CO2, start=c(1987,1),frequency = 12)
+y <- window(y_all, end=c(2014,12))
+```
+
+モデルの設定ローカルトレンド + 周期モデル
+```{r}
+build_dlm_CO2a <- function(par){
+  return(
+    dlmModPoly(order=2, dW=exp(par[1:2]), dV = exp(par[3])) + 
+      #dWは第1成分がWで残りに10個の0が並ぶ計11個（12ヶ月の中の区間数）
+      dlmModSeas(frequency = 12, dW = c(exp(par[4]), rep(0, times = 10)), dV = 0)
+  )
+}
+```
+パラメータの最尤推定
+```{r}
+fit_dlm_CO2a <- dlmMLE(y=y, parm=rep(0,4), build = build_dlm_CO2a)
+fit_dlm_CO2a
+```
+最尤推定結果をモデルに指定
+```{r}
+mod <- build_dlm_CO2a(fit_dlm_CO2a$par)
+```
+カルマンフィルタリング
+```{r}
+dlmFiltered_obj <- dlmFilter(y=y, mod=mod)
+dlmFiltered_obja <- dlmFiltered_obj
+```
+
+フィルタリング分布の平均
+```{r}
+mu <- dropFirst(dlmFiltered_obja$m[,1])
+gamma <- dropFirst(dlmFiltered_obja$m[,3])
+```
+プロット
+```{r}
+oldpar <- par(no.readonly = TRUE)
+par(mfrow=c(3,1)); par(oma = c(2,0,0,0));par(mar=c(2,4,1,1))
+ts.plot(y, ylab = "観測値")
+ts.plot(mu, ylab = "レベル成分",ylim = c(350,405))
+ts.plot(gamma, ylab = "周期成分", ylim = c(-9,6))
+mtext(text = "Time", side=1, line=1, outer= TRUE)
+par(oldpar)
+```
+対数尤度の確認
+```{r}
+-dlmLL(y=y, mod=mod)
+```
+ローカルレベルモデル + 周期モデル
+```{r}
+build_dlm_CO2b <- function(par){
+  return(
+    dlmModPoly(order = 1,dW = exp(par[1]), dV = exp(par[2])) + 
+      dlmModSeas(frequency = 12, dW= c(exp(par[3]), rep(0,times = 10)),dV = 0)
+  )
+}
+```
+
+```{r}
+fit_dlm_CO2b <- dlmMLE(y=y, parm=rep(0,3), build = build_dlm_CO2b)
+fit_dlm_CO2b
+```
+最尤推定結果をモデルに指定
+```{r}
+mod <- build_dlm_CO2b(fit_dlm_CO2b$par)
+```
+カルマンフィルタリング
+```{r}
+dlmFiltered_objb <- dlmFilter(y=y, mod=mod)
+```
+
+フィルタリング分布の平均
+```{r}
+mu <- dropFirst(dlmFiltered_objb$m[,1])
+gamma <- dropFirst(dlmFiltered_objb$m[,3])
+```
+
+```{r}
+oldpar <- par(no.readonly = TRUE)
+par(mfrow=c(3,1)); par(oma = c(2,0,0,0));par(mar=c(2,4,1,1))
+ts.plot(y, ylab = "観測値")
+ts.plot(mu, ylab = "レベル成分",ylim = c(350,405))
+ts.plot(gamma, ylab = "周期成分", ylim = c(-9,6))
+mtext(text = "Time", side=1, line=1, outer= TRUE)
+par(oldpar)
+```
+
+対数尤度の確認
+ローカルトレンドモデルを使用した場合より悪化している。
+```{r}
+-dlmLL(y=y, mod=mod)
+```
+ローカルトレンドモデル + 周期モデル（周波数アプローチ）

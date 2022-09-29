@@ -295,3 +295,63 @@ legend(legend = c("観測値","平均（予測分布）","95%区間（予測分�
        col = c("lightgray","black","black"),
        x = "topright", text.width = 32, cex=0.6)
 ```
+カルマン平滑化
+
+```{r}
+dlmSmoothed_obj <- dlmSmooth(y = Nile,mod = mod)
+str(dlmSmoothed_obj, max.level = 1)
+```
+
+平滑化分布の平均と標準偏差を求める
+```{r}
+s <- dropFirst(dlmSmoothed_obj$s)
+s_sdev <- sqrt(dropFirst(as.numeric(dlmSvd2var(dlmSmoothed_obj$U.S, dlmSmoothed_obj$D.S))))
+```
+2.5%点と97.5%点の計算
+```{r}
+s_quant <- list(s+qnorm(0.025,sd = s_sdev), s+ qnorm(0.975,sd = s_sdev))
+```
+結果のプロット
+```{r}
+ts.plot(cbind(Nile,s,do.call("cbind", s_quant)),
+        col = c("lightgray","black", "black", "black"),
+        lty = c("solid","solid","dashed","dashed"))
+legend(legend = c("観測値","平均(平滑化分布)","95%区間（平滑化分布）"),
+       lty = c("solid","solid","dashed"),
+       col = c("lightgrey","black","black"),
+       x = "topright", text.width = 26, cex = 0.6)
+```
+モデルの尤度の確認
+状態方程式モデルでは、データ編フィッティング度合いは尤度で測る。
+**負の対数尤度が出力**
+```{r}
+dlmLL(y=Nile,mod = mod)
+```
+イノベーション（予測誤差・残差）
+観測方程式・状態方程式の形式から、モデルが適切であれば残差は独立同一な正規分布に従う
+
+表示領域の調整
+```{r}
+oldpar <- par(no.readonly = TRUE)
+par(oma = c(0,0,0,0));par(mar = c(4,4,3,1))
+```
+
+自己相関の確認
+上段が規格化イノベーション、中段が自己相関係数、下段がLjung-Box検定のP値
+```{r}
+tsdiag(object = dlmfiltered_obj)
+par(oldpar)
+```
+正規性の確認
+規格化イノベーションの取得
+```{r}
+e <- residuals(object = dlmfiltered_obj, sd = FALSE)
+e
+```
+Q-Qプロット
+一部区間をのぞき、概ね正規分布に従っている事が確認できる。
+```{r}
+qqnorm(e)
+qqline(e)
+```
+
